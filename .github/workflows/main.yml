@@ -1,49 +1,58 @@
-name: Daily Update
+name: Scheduled Update for live.m3u Processing
 
+# 定时触发：每天00:00 UTC执行
 on:
   schedule:
-    - cron: '45 21 * * *'
-  workflow_dispatch:
-    branches:
-      - main
+    - cron: '0 0 * * *'  # 每天00:00 UTC执行一次
 
 jobs:
-  run_script:
+  test_process_file:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          repository: yuanzl77/IPTV
+          path: original
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.10'
+      - name: Checkout fork repository
+        uses: actions/checkout@v2
+        with:
+          path: forked
 
-    - name: Cache dependencies
-      uses: actions/cache@v2
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+      # 第三步：检查文件是否更新
+      - name: Check if live.m3u has changed
+        run: |
+          if ! diff original/live.m3u forked/live.m3u > /dev/null; then
+            echo "File has changed"
+            echo "file_changed=true" >> $GITHUB_ENV
+          else
+            echo "No changes detected"
+            echo "file_changed=false" >> $GITHUB_ENV
+          fi
 
-    - name: Install dependencies
-      run: |
-        pip install requests
+      # 如果文件有变化，继续执行处理
+      - name: Process the file and save as live_clear.m3u
+        if: env.file_changed == 'true'
+        run: |
+          # 1. 删除从"#EXTINF:-1 tvg-id="1" tvg-name="请阅读""到"#EXTINF:-1 tvg-id="1" tvg-name="CCTV1"这一行之前的内容
+          sed -i '/#EXTINF:-1 tvg-id="1" tvg-name="请阅读"/,/^#EXTINF:-1 tvg-id="1" tvg-name="CCTV1"/{ /^#EXTINF:-1 tvg-id="1" tvg-name="CCTV1"/!d }' original/live.m3u
 
-    - name: Run Python script
-      run: python main.py
+          # 2. 删除所有以 "#EXTINF:-1" 开头且包含 "tvg-name=\"CCTV5+\"" 的行及其下一行
+          awk '/^#EXTINF:-1 .*tvg-name="CCTV5\+"/ {getline; next} 1' original/live.m3u > forked/live_clear.m3u
 
-    - name: Commit and push if changed
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git add -A
-        if ! git diff --staged --quiet; then
-          git commit -m "Auto-update live files"
+          # 检查文件是否确实修改
+          git diff forked/live_clear.m3u || echo "No changes detected in live_clear.m3u."
+
+      # 如果文件有更新，执行提交和推送
+      - name: Commit and push changes as live_clear.m3u
+        if: env.file_changed == 'true'
+        run: |
+          cd forked
+          git config --global user.name "Your GitHub Username"
+          git config --global user.email "your-email@example.com"
+          git add live_clear.m3u
+          git diff --cached --quiet || git commit -m "Scheduled update: processed and saved as live_clear.m3u"
           git push
-        fi
-
-    env:
-      TZ: Asia/Shanghai
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
