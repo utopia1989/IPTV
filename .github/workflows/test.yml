@@ -1,0 +1,41 @@
+name: Manual Test for live.m3u Processing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test_process_file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          repository: yuanzl77/IPTV
+          path: original
+      - name: Checkout fork repository
+        uses: actions/checkout@v2
+        with:
+          path: forked
+      
+      - name: Process the file and save as live_clear.m3u
+        run: |
+          # 1. 删除从"#EXTINF:-1 tvg-id="1" tvg-name="请阅读""到"#EXTINF:-1 tvg-id="1" tvg-name="CCTV1"这一行之前的内容
+          sed -i '/#EXTINF:-1 tvg-id="1" tvg-name="请阅读"/,/^#EXTINF:-1 tvg-id="1" tvg-name="CCTV1"/{ /^#EXTINF:-1 tvg-id="1" tvg-name="CCTV1"/!d }' original/live.m3u
+
+          # 2. 删除所有以 "#EXTINF:-1" 开头且包含 "tvg-name=\"CCTV5+\"" 的行及其下一行
+          awk '/^#EXTINF:-1 .*tvg-name="CCTV5\+"/ {getline; next} 1' original/live.m3u > forked/live_clear.m3u
+
+          # 检查文件是否确实修改
+          git diff forked/live_clear.m3u || echo "No changes detected in live_clear.m3u."
+
+      
+      - name: Commit and push changes as live_clear.m3u
+        run: |
+          cd forked
+          git config --global user.name "Your GitHub Username"
+          git config --global user.email "your-email@example.com"
+          git add live_clear.m3u
+          git diff --cached --quiet || git commit -m "Manual test: processed and saved as live_clear.m3u"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
